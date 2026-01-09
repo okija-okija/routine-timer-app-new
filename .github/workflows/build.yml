@@ -40,7 +40,7 @@ jobs:
           npx cap add android || true
           npx cap sync android
 
-　　　　# 6. AndroidManifest.xml の修正 (TTS権限とバックグラウンド動作)
+      # 6. AndroidManifest.xml の修正 (TTS権限とバックグラウンド動作)
       - name: Inject Permissions to Manifest
         run: |
           # Android 11+対応: TTSサービスへのアクセス権限を宣言 (<application>タグの直前に挿入)
@@ -51,6 +51,8 @@ jobs:
           
           # 権限の追加 (<manifest>終了タグの直前に挿入)
           sed -i '/<\/manifest>/i <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
+
+ 
       # 7. カスタムJavaファイルの作成 (ForegroundServiceなど)
       # シェルスクリプトでファイルの中身を書き込みます
       - name: Create ForegroundService.java
