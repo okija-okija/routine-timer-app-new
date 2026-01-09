@@ -173,59 +173,85 @@ async function sendNotification(title, body) {
 }
 
 // ==========================================
-// 6. 音声合成 (TTS)
+// 6. 音声合成 (Native TTS Plugin)
 // ==========================================
-function loadVoices() {
-    // 修正: 音声機能がない環境では何もしない（エラー防止）
-    if (!('speechSynthesis' in window)) return;
+// プラグインを取得（なければWeb標準にフォールバック...はせず、今回はネイティブ優先）
+const TextToSpeech = CapacitorPlugins['TextToSpeech'] || null;
 
-    const voices = window.speechSynthesis.getVoices();
-    els.voiceSelect.innerHTML = '<option value="">デフォルト</option>';
+async function loadVoices() {
+    els.voiceSelect.innerHTML = '<option value="">デフォルト (端末設定)</option>';
     
-    voices.forEach(voice => {
-        if(voice.lang.includes('ja') || voice.lang.includes('JP')) {
-            const option = document.createElement('option');
-            option.value = voice.voiceURI;
-            option.textContent = `${voice.name} (${voice.lang})`;
-            if (voice.voiceURI === appConfig.voiceURI) option.selected = true;
-            els.voiceSelect.appendChild(option);
+    if (TextToSpeech) {
+        try {
+            // ネイティブから声のリストを取得
+            const { voices } = await TextToSpeech.getSupportedVoices();
+            voices.forEach((voice, index) => {
+                // 日本語のみ抽出 (AndroidのTTSは lang が "ja-JP" や "ja_JP" で返る)
+                if (voice.lang.includes('ja') || voice.lang.includes('JP')) {
+                    const option = document.createElement('option');
+                    // プラグインでは voice の指定に「インデックス番号」を使うことが多いですが
+                    // ここではシンプルに表示だけ行い、選択時はURI等を保持します
+                    option.value = index; // 選択用にインデックスを保存
+                    option.textContent = `${voice.name.substring(0, 20)} (${voice.lang})`;
+                    els.voiceSelect.appendChild(option);
+                }
+            });
+        } catch (e) {
+            console.error("Voice load error:", e);
         }
-    });
-}
-
-// 修正: 音声機能がある場合のみイベントを設定する（ここがエラーの原因でした）
-if ('speechSynthesis' in window) {
-    window.speechSynthesis.onvoiceschanged = loadVoices;
-} else {
-    console.log("Web Speech API is not supported in this environment.");
-}
-
-function speak(text) {
-    // 修正: 音声機能がない場合はログだけ出して終了する（アプリを落とさない）
-    if (!('speechSynthesis' in window)) {
-        console.log("読み上げスキップ: " + text);
-        return;
     }
+}
 
+// 起動時に声をロード
+loadVoices();
+
+async function speak(text) {
+    // ログ出し（デバッグ用）
+    console.log("Speaking:", text);
+
+    if (TextToSpeech) {
+        try {
+            // 以前の発話をキャンセル
+            await TextToSpeech.stop();
+
+            // 読み上げ設定
+            const options = {
+                text: text,
+                lang: 'ja-JP', // 日本語を強制
+                rate: appConfig.voiceRate || 1.0,
+                pitch: 1.0,
+                volume: 1.0
+            };
+
+            // 特定の声が選ばれていれば設定（voiceはインデックス番号で指定）
+            if (els.voiceSelect.value !== "") {
+                options.voice = parseInt(els.voiceSelect.value);
+            }
+
+            // 実行
+            await TextToSpeech.speak(options);
+            
+        } catch (e) {
+            // エラー時はアラートを出さず、ログだけ残す（アプリ停止防止）
+            console.error("TTS Error:", e);
+            // 万が一プラグインがダメならWeb標準で試す（最終手段）
+            fallbackSpeak(text);
+        }
+    } else {
+        // プラグイン未検出時
+        fallbackSpeak(text);
+    }
+}
+
+// 最終手段: Web標準API (ブラウザ動作確認用)
+function fallbackSpeak(text) {
+    if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
     const uttr = new SpeechSynthesisUtterance(text);
     uttr.lang = 'ja-JP';
     uttr.rate = appConfig.voiceRate;
-    
-    if (appConfig.voiceURI) {
-        const voices = window.speechSynthesis.getVoices();
-        const v = voices.find(vo => vo.voiceURI === appConfig.voiceURI);
-        if (v) uttr.voice = v;
-    }
-    
-    // エラーハンドリングを追加（読み上げ中のエラーで止まらないように）
-    uttr.onerror = function(event) {
-        console.error("SpeechSynthesis error", event);
-    };
-
     window.speechSynthesis.speak(uttr);
 }
-
 // ==========================================
 // 7. タイマーロジック & UI更新
 // ==========================================
