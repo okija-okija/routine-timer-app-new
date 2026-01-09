@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: 18
 
-      # 3. 依存関係のインストール
+# 3. 依存関係のインストール
       - name: Install dependencies
         run: |
           npm install
