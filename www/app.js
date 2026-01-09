@@ -176,7 +176,9 @@ async function sendNotification(title, body) {
 // 6. 音声合成 (TTS)
 // ==========================================
 function loadVoices() {
-    if (!window.speechSynthesis) return;
+    // 修正: 音声機能がない環境では何もしない（エラー防止）
+    if (!('speechSynthesis' in window)) return;
+
     const voices = window.speechSynthesis.getVoices();
     els.voiceSelect.innerHTML = '<option value="">デフォルト</option>';
     
@@ -190,19 +192,37 @@ function loadVoices() {
         }
     });
 }
-window.speechSynthesis.onvoiceschanged = loadVoices;
+
+// 修正: 音声機能がある場合のみイベントを設定する（ここがエラーの原因でした）
+if ('speechSynthesis' in window) {
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+} else {
+    console.log("Web Speech API is not supported in this environment.");
+}
 
 function speak(text) {
-    if (!window.speechSynthesis) return;
+    // 修正: 音声機能がない場合はログだけ出して終了する（アプリを落とさない）
+    if (!('speechSynthesis' in window)) {
+        console.log("読み上げスキップ: " + text);
+        return;
+    }
+
     window.speechSynthesis.cancel();
     const uttr = new SpeechSynthesisUtterance(text);
     uttr.lang = 'ja-JP';
     uttr.rate = appConfig.voiceRate;
+    
     if (appConfig.voiceURI) {
         const voices = window.speechSynthesis.getVoices();
         const v = voices.find(vo => vo.voiceURI === appConfig.voiceURI);
         if (v) uttr.voice = v;
     }
+    
+    // エラーハンドリングを追加（読み上げ中のエラーで止まらないように）
+    uttr.onerror = function(event) {
+        console.error("SpeechSynthesis error", event);
+    };
+
     window.speechSynthesis.speak(uttr);
 }
 
