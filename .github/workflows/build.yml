@@ -18,8 +18,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-
-# 3. 依存関係のインストール
+      
+      # 3. 依存関係のインストール
       - name: Install dependencies
         run: |
           npm install --legacy-peer-deps
@@ -40,7 +40,7 @@ jobs:
           npx cap add android || true
           npx cap sync android
 
-# 6. AndroidManifest.xml の修正 (TTS権限とバックグラウンド動作)
+　　　　# 6. AndroidManifest.xml の修正 (TTS権限とバックグラウンド動作)
       - name: Inject Permissions to Manifest
         run: |
           # Android 11+対応: TTSサービスへのアクセス権限を宣言 (<application>タグの直前に挿入)
