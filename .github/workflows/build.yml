@@ -22,8 +22,8 @@ jobs:
 # 3. 依存関係のインストール
       - name: Install dependencies
         run: |
-          npm install
-          npm install -D typescript
+          npm install --legacy-peer-deps
+          npm install -D typescript --legacy-peer-deps
 
       # 4. Java環境のセットアップ (Androidビルドに必要)
       - name: Setup Java
