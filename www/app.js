@@ -173,77 +173,52 @@ async function sendNotification(title, body) {
 }
 
 // ==========================================
-// 6. 音声合成 (Native TTS Plugin)
+// 6. 音声合成 (Native TTS Plugin) 
 // ==========================================
-// プラグインを取得（なければWeb標準にフォールバック...はせず、今回はネイティブ優先）
 const TextToSpeech = CapacitorPlugins['TextToSpeech'] || null;
 
 async function loadVoices() {
     els.voiceSelect.innerHTML = '<option value="">デフォルト (端末設定)</option>';
-    
     if (TextToSpeech) {
         try {
-            // ネイティブから声のリストを取得
             const { voices } = await TextToSpeech.getSupportedVoices();
             voices.forEach((voice, index) => {
-                // 日本語のみ抽出 (AndroidのTTSは lang が "ja-JP" や "ja_JP" で返る)
                 if (voice.lang.includes('ja') || voice.lang.includes('JP')) {
                     const option = document.createElement('option');
-                    // プラグインでは voice の指定に「インデックス番号」を使うことが多いですが
-                    // ここではシンプルに表示だけ行い、選択時はURI等を保持します
-                    option.value = index; // 選択用にインデックスを保存
+                    option.value = index;
                     option.textContent = `${voice.name.substring(0, 20)} (${voice.lang})`;
                     els.voiceSelect.appendChild(option);
                 }
             });
-        } catch (e) {
-            console.error("Voice load error:", e);
-        }
+        } catch (e) { console.error("Voice load error:", e); }
     }
 }
 
-// 起動時に声をロード
-loadVoices();
-
 async function speak(text) {
-    // ログ出し（デバッグ用）
     console.log("Speaking:", text);
-
     if (TextToSpeech) {
         try {
-            // 以前の発話をキャンセル
             await TextToSpeech.stop();
-
-            // 読み上げ設定
             const options = {
                 text: text,
-                lang: 'ja-JP', // 日本語を強制
-                rate: appConfig.voiceRate || 1.0,
+                lang: 'ja-JP',
+                rate: appConfig.voiceRate || 1.2, // 元の1.2をデフォルトに
                 pitch: 1.0,
                 volume: 1.0
             };
-
-            // 特定の声が選ばれていれば設定（voiceはインデックス番号で指定）
             if (els.voiceSelect.value !== "") {
                 options.voice = parseInt(els.voiceSelect.value);
             }
-
-            // 実行
             await TextToSpeech.speak(options);
-            
         } catch (e) {
-            // エラー時はアラートを出さず、ログだけ残す（アプリ停止防止）
             console.error("TTS Error:", e);
-            // 万が一プラグインがダメならWeb標準で試す（最終手段）
             fallbackSpeak(text);
         }
     } else {
-        // プラグイン未検出時
         fallbackSpeak(text);
     }
 }
 
-// 最終手段: Web標準API (ブラウザ動作確認用)
 function fallbackSpeak(text) {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
@@ -252,6 +227,9 @@ function fallbackSpeak(text) {
     uttr.rate = appConfig.voiceRate;
     window.speechSynthesis.speak(uttr);
 }
+
+
+
 // ==========================================
 // 7. タイマーロジック & UI更新
 // ==========================================
@@ -307,20 +285,42 @@ function finishTaskTimer() {
     els.retryBtn.classList.remove('hidden');
     els.statusMsg.textContent = "アクション待ち...";
 
-    let msg = state.isBreak ? "休憩終了です。" : "時間です。";
+    // --- 修正：元の優しい問いかけを復活 ---
+    let msg = "";
+    if (state.isBreak) {
+        msg = "休憩終了です。画面を見て、次のタスクへ進んでください。";
+    } else {
+        msg = "時間です。終わりましたか？次へ進むか、延長を選んでください。";
+    }
+    
     speak(msg);
     sendNotification("タイマー終了", msg);
 
-    // 放置防止ループ
+    // --- 修正：ADHD向け放置防止フレーズを復活 ---
     state.warnInterval = setInterval(() => {
         if (state.warnCount >= appConfig.warnLoopLimit) {
             clearInterval(state.warnInterval);
+            speak("反応がないため音声を停止します。再開時は画面を操作してください。");
             return;
         }
+        
         state.warnCount++;
-        speak("画面を操作してください。");
-    }, 15000);
+        const phrases = [
+            "作業に集中しすぎていませんか？画面を操作してください。",
+            "手が止まっていませんか？次へ行くか、延長しましょう。",
+            "時間管理モードです。切り替えをお願いします。"
+        ];
+        // 順番に、またはランダムに読み上げ
+        speak(phrases[state.warnCount % phrases.length]);
+        
+    }, 300000); // 5分おきにチェック
 }
+//時間	ミリ秒 (ms)
+//1分	60000
+//5分	300000
+//10分	600000
+//30分	1800000
+//1時間	3600000
 
 // ==========================================
 // 8. イベントハンドラ
@@ -361,13 +361,13 @@ function setupEventListeners() {
     els.breakBtn.addEventListener('click', () => {
         clearInterval(state.warnInterval);
         state.isBreak = true;
-        speak("休憩します。");
+        speak(`了解しました。${appConfig.breakTime}分休憩します。深呼吸しましょう。`);
         startTimer(appConfig.breakTime);
     });
 
     els.retryBtn.addEventListener('click', () => {
         clearInterval(state.warnInterval);
-        speak("延長します。");
+        speak("3分延長します。無理せず進めましょう。");
         startTimer(3);
     });
 
@@ -402,7 +402,9 @@ function handleNext() {
 
 function startTask(index) {
     const task = currentTasks[index];
-    speak(`次は、${task.name}`);
+    // --- 修正：元の具体的な案内を復活 ---
+    speak(`次は、${task.name}。時間は${task.duration}分です。開始。`);
+    
     startTimer(task.duration);
     els.nextBtn.textContent = "完了 / 次へ";
 }
