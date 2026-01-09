@@ -30,7 +30,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17' 
+          java-version: '21'
 
       # 5. Capacitor初期化とAndroidフォルダの生成
       # ここで 'npx cap add android' を行うことで、gradlewなどのビルドツールが自動生成されます
