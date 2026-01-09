@@ -40,13 +40,16 @@ jobs:
           npx cap add android || true
           npx cap sync android
 
-      # 6. AndroidManifest.xml の修正 (バックグラウンド動作などの権限追加)
-      # sedコマンドを使って、XMLファイル内の適切な場所に追記します
+      # 6. AndroidManifest.xml の修正 (TTS権限とバックグラウンド動作)
       - name: Inject Permissions to Manifest
         run: |
-          # サービスの登録を追加
+          # Android 11+対応: TTSサービスへのアクセス権限を宣言 (<application>タグの直前に挿入)
+          sed -i '/<application/i <queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>' android/app/src/main/AndroidManifest.xml
+          
+          # フォアグラウンドサービスの登録 (<application>終了タグの直前に挿入)
           sed -i '/<\/application>/i <service android:name=".ForegroundService" android:exported="false" />' android/app/src/main/AndroidManifest.xml
-          # 権限の追加
+          
+          # 権限の追加 (<manifest>終了タグの直前に挿入)
           sed -i '/<\/manifest>/i <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
 
       # 7. カスタムJavaファイルの作成 (ForegroundServiceなど)
