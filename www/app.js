@@ -400,129 +400,65 @@ function endAllTasks() {
 }
 
 // ==========================================
-// 6. 音声合成 (Native TTS Plugin) 
+// 6. リスト描画 (SortableJS修正版)
 // ==========================================
-const TextToSpeech = CapacitorPlugins['TextToSpeech'] || null;
-
-async function loadVoices() {
-    els.voiceSelect.innerHTML = '<option value="">デフォルト (端末設定)</option>';
-    if (TextToSpeech) {
-        try {
-            const { voices } = await TextToSpeech.getSupportedVoices();
-            voices.forEach((voice, index) => {
-                if (voice.lang.includes('ja') || voice.lang.includes('JP')) {
-                    const option = document.createElement('option');
-                    option.value = index;
-                    option.textContent = `${voice.name.substring(0, 20)} (${voice.lang})`;
-                    els.voiceSelect.appendChild(option);
-                }
-            });
-        } catch (e) { console.error("Voice load error:", e); }
-    }
-}
-
-async function speak(text) {
-    console.log("Speaking:", text);
-    if (TextToSpeech) {
-        try {
-            await TextToSpeech.stop();
-            const options = {
-                text: text,
-                lang: 'ja-JP',
-                rate: appConfig.voiceRate || 1.2, // 元の1.2をデフォルトに
-                pitch: 1.0,
-                volume: 1.0
-            };
-            if (els.voiceSelect.value !== "") {
-                options.voice = parseInt(els.voiceSelect.value);
+function renderTaskList() {
+    els.taskList.innerHTML = '';
+    currentTasks.forEach((task, index) => {
+        const li = document.createElement('li');
+        li.className = "bg-white border border-gray-200 rounded-xl p-3 flex items-center shadow-sm select-none";
+        li.innerHTML = `
+            <div class="drag-handle p-2 mr-2 text-gray-400 cursor-grab active:cursor-grabbing touch-none">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
+            </div>
+            <div class="flex-1 min-w-0 mr-3">
+                <input type="text" value="${task.name}" class="w-full text-base font-bold text-gray-800 bg-transparent border-b border-transparent focus:border-blue-500 placeholder-gray-400 py-1" placeholder="タスク名">
+            </div>
+            <div class="flex items-center space-x-3">
+                <div class="flex items-center bg-gray-50 rounded-lg px-2 py-1">
+                    <input type="number" value="${task.duration}" class="w-10 text-center bg-transparent font-bold text-gray-700" min="1">
+                    <span class="text-xs text-gray-400">分</span>
+                </div>
+                <button class="del-btn text-red-400 hover:text-red-600 p-2 rounded-full hover:bg-red-50">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                </button>
+            </div>
+        `;
+        
+        // イベントバブリング防止とデータバインディング
+        const nameInput = li.querySelector('input[type="text"]');
+        const durInput = li.querySelector('input[type="number"]');
+        
+        // 【重要】SortableJSと干渉しないように、入力時のイベント伝播を制御
+        nameInput.addEventListener('mousedown', e => e.stopPropagation());
+        nameInput.addEventListener('touchstart', e => e.stopPropagation());
+        nameInput.addEventListener('input', e => currentTasks[index].name = e.target.value);
+        
+        durInput.addEventListener('mousedown', e => e.stopPropagation());
+        durInput.addEventListener('touchstart', e => e.stopPropagation());
+        durInput.addEventListener('change', e => currentTasks[index].duration = parseInt(e.target.value) || 1);
+        
+        li.querySelector('.del-btn').addEventListener('click', () => {
+            if(confirm('削除しますか？')) {
+                currentTasks.splice(index, 1);
+                renderTaskList();
             }
-            await TextToSpeech.speak(options);
-        } catch (e) {
-            console.error("TTS Error:", e);
-            fallbackSpeak(text);
-        }
-    } else {
-        fallbackSpeak(text);
-    }
-}
-
-function fallbackSpeak(text) {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const uttr = new SpeechSynthesisUtterance(text);
-    uttr.lang = 'ja-JP';
-    uttr.rate = appConfig.voiceRate;
-    window.speechSynthesis.speak(uttr);
-}
-
-// ==========================================
-// 7. タイマーロジック & UI更新
-// ==========================================
-
-// ... (formatTime, updateDisplay, startTimer は変更なし) ...
-
-function finishTaskTimer() {
-    clearInterval(state.timerInterval);
-    state.isRunning = false;
-    els.retryBtn.classList.remove('hidden');
-    els.statusMsg.textContent = "アクション待ち...";
-
-    // --- 修正：元の優しい問いかけを復活 ---
-    let msg = "";
-    if (state.isBreak) {
-        msg = "休憩終了です。画面を見て、次のタスクへ進んでください。";
-    } else {
-        msg = "時間です。終わりましたか？次へ進むか、延長を選んでください。";
-    }
-    
-    speak(msg);
-    sendNotification("タイマー終了", msg);
-
-    // --- 修正：ADHD向け放置防止フレーズを復活 ---
-    state.warnInterval = setInterval(() => {
-        if (state.warnCount >= appConfig.warnLoopLimit) {
-            clearInterval(state.warnInterval);
-            speak("反応がないため音声を停止します。再開時は画面を操作してください。");
-            return;
-        }
+        });
         
-        state.warnCount++;
-        const phrases = [
-            "作業に集中しすぎていませんか？画面を操作してください。",
-            "手が止まっていませんか？次へ行くか、延長しましょう。",
-            "時間管理モードです。切り替えをお願いします。"
-        ];
-        // 順番に、またはランダムに読み上げ
-        speak(phrases[state.warnCount % phrases.length]);
-        
-    }, 15000); // 15秒おきにチェック
+        els.taskList.appendChild(li);
+    });
+
+    // SortableJS設定 (スマホ最適化)
+    new Sortable(els.taskList, {
+        handle: '.drag-handle',   // ハンドル部分のみでドラッグ可能にする
+        delay: 100,               // 誤タップ防止
+        delayOnTouchOnly: true,
+        animation: 150,
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'bg-blue-50',
+        onEnd: evt => {
+            const item = currentTasks.splice(evt.oldIndex, 1)[0];
+            currentTasks.splice(evt.newIndex, 0, item);
+        }
+    });
 }
-
-// ==========================================
-// 8. イベントハンドラ & 進行ロジック
-// ==========================================
-
-// ... (setupEventListeners, handleNext, endAllTasks は変更なし) ...
-
-function startTask(index) {
-    const task = currentTasks[index];
-    // --- 修正：元の具体的な案内を復活 ---
-    speak(`次は、${task.name}。時間は${task.duration}分です。開始。`);
-    
-    startTimer(task.duration);
-    els.nextBtn.textContent = "完了 / 次へ";
-}
-
-// handleBreakなども元の雰囲気に
-els.breakBtn.addEventListener('click', () => {
-    clearInterval(state.warnInterval);
-    state.isBreak = true;
-    speak(`了解しました。${appConfig.breakTime}分休憩します。深呼吸しましょう。`);
-    startTimer(appConfig.breakTime);
-});
-
-els.retryBtn.addEventListener('click', () => {
-    clearInterval(state.warnInterval);
-    speak("3分延長します。無理せず進めましょう。");
-    startTimer(3);
-});
