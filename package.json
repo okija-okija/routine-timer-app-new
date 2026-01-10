@@ -1,7 +1,7 @@
 {
   "name": "routine-timer",
   "version": "1.0.0",
-  "description": "Routine Timer App",
+  "description": "Native Routine Timer",
   "main": "index.js",
   "dependencies": {
     "@capacitor/android": "^6.0.0",
