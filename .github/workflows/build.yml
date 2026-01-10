@@ -15,8 +15,8 @@ jobs:
       
       - name: Install dependencies
         run: |
-          npm install
-          npm install -D typescript
+          npm install --legacy-peer-deps
+          npm install -D typescript --legacy-peer-deps
 
       - name: Setup Java
         uses: actions/setup-java@v4
