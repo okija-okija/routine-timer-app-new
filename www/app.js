@@ -4,9 +4,16 @@
 const CapacitorPlugins = window.Capacitor ? window.Capacitor.Plugins : {};
 const Preferences = CapacitorPlugins.Preferences || null;
 const LocalNotifications = CapacitorPlugins.LocalNotifications || null;
-const TextToSpeech = CapacitorPlugins['TextToSpeech'] || null; // ネイティブTTS
+const TextToSpeech = CapacitorPlugins['TextToSpeech'] || null;
 
-// デフォルト設定
+// ★バックグラウンド維持用の無音音声データ (1秒の無音MP3)
+const silentAudioUri = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw//OEAAAAAAAAAAAAAAAAAAAAAAAATGF2YzU4LjkxLjEwMAAAAAAAAAAAAAAAJAAAAAAAAAAAASAAAAAAAASQAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAAlAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAAlAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+const keepAliveAudio = new Audio(silentAudioUri);
+keepAliveAudio.loop = true;
+
+// SortableJSのインスタンス保持用
+let sortableInstance = null;
+
 const defaultTasks = [
     { id: '1', name: 'カーテンを開けて光を浴びる', duration: 1 },
     { id: '2', name: '顔を洗う', duration: 3 },
@@ -26,7 +33,7 @@ let appConfig = {
 let state = {
     currentIndex: -1,
     isBreak: false,
-    endTime: null,     // 【重要】タイマー終了予定時刻（Timestamp）
+    endTime: null,
     timerId: null,
     warnId: null,
     warnCount: 0,
@@ -38,7 +45,6 @@ let els = {};
 document.addEventListener('DOMContentLoaded', initializeApp);
 
 function initializeApp() {
-    // DOM取得
     els = {
         main: document.querySelector('main'),
         settingsOverlay: document.getElementById('settingsOverlay'),
@@ -64,7 +70,6 @@ function initializeApp() {
         voiceSelect: document.getElementById('voiceSelect')
     };
 
-    // リングの円周計算 (r=54)
     const circumference = 54 * 2 * Math.PI;
     els.progressRing.style.strokeDasharray = `${circumference} ${circumference}`;
     els.progressRing.style.strokeDashoffset = circumference;
@@ -73,7 +78,6 @@ function initializeApp() {
     setupEventListeners();
     loadData();
     
-    // 通知権限リクエスト
     if (LocalNotifications) {
         LocalNotifications.requestPermissions();
     }
@@ -99,14 +103,19 @@ async function loadData() {
     if (savedConfig) appConfig = { ...appConfig, ...savedConfig };
     currentTasks = savedTasks || JSON.parse(JSON.stringify(defaultTasks));
 
-    // UI反映
     els.breakTimeInput.value = appConfig.breakTime;
     els.loopLimitInput.value = appConfig.warnLoopLimit;
     els.voiceRateInput.value = appConfig.voiceRate;
     els.voiceRateValue.textContent = `${appConfig.voiceRate}x`;
     
-    loadVoices();
-    updateDisplay(0, 0); // 初期表示
+    // 音声リスト読み込み待機
+    await loadVoices();
+    // 設定された音声を選択状態にする
+    if (appConfig.voiceURI && els.voiceSelect.querySelector(`option[value="${appConfig.voiceURI}"]`)) {
+        els.voiceSelect.value = appConfig.voiceURI;
+    }
+
+    updateDisplay(0, 0);
 }
 
 async function saveToStorage() {
@@ -139,14 +148,15 @@ async function loadVoices() {
         try {
             const { voices } = await TextToSpeech.getSupportedVoices();
             voices.forEach((v, i) => {
-                if (v.lang.includes('ja') || v.lang.includes('JP')) {
+                // 日本語が含まれる、またはロケールが日本
+                if (v.lang.includes('ja') || v.lang.includes('JP') || v.lang === 'ja_JP') {
                     const op = document.createElement('option');
-                    op.value = i; // インデックスを使用
-                    op.textContent = `${v.name.substring(0,15)} (${v.lang})`;
+                    op.value = i; 
+                    op.textContent = `${v.name.substring(0,20)} (${v.lang})`;
                     els.voiceSelect.appendChild(op);
                 }
             });
-        } catch(e) { console.error(e); }
+        } catch(e) { console.error("Voices load error:", e); }
     }
 }
 
@@ -154,16 +164,28 @@ async function speak(text) {
     if (TextToSpeech) {
         try {
             await TextToSpeech.stop();
+            
             const opts = {
                 text: text,
-                lang: 'ja-JP',
                 rate: appConfig.voiceRate,
                 pitch: 1.0,
-                volume: 1.0
+                volume: 1.0,
+                category: 'ambient' // 他の音声を止めない設定
             };
-            if (els.voiceSelect.value !== "") opts.voice = parseInt(els.voiceSelect.value);
+
+            // ★修正: 声が指定されている場合は lang を指定しない (競合回避)
+            // 指定がない場合のみ lang を強制する
+            if (els.voiceSelect.value !== "") {
+                opts.voice = parseInt(els.voiceSelect.value);
+            } else {
+                opts.lang = 'ja-JP';
+            }
+
             await TextToSpeech.speak(opts);
-        } catch(e) { console.error(e); fallbackSpeak(text); }
+        } catch(e) { 
+            console.error("TTS Error:", e);
+            fallbackSpeak(text); 
+        }
     } else {
         fallbackSpeak(text);
     }
@@ -182,21 +204,23 @@ function fallbackSpeak(text) {
 // 4. タイマーロジック (バックグラウンド対応版)
 // ==========================================
 function startTimer(minutes) {
-    stopTimerLogic(); // 既存タイマー停止
+    stopTimerLogic();
     
+    // ★バックグラウンド対策: 無音再生開始
+    keepAliveAudio.play().catch(e => console.log("Audio play failed (interaction needed)", e));
+
     const durationSec = minutes * 60;
     const now = Date.now();
-    state.endTime = now + (durationSec * 1000); // 終了時刻を計算
+    state.endTime = now + (durationSec * 1000);
     state.isRunning = true;
     state.warnCount = 0;
     
     els.statusMsg.textContent = "";
     els.retryBtn.classList.add('hidden');
 
-    // 初回描画
     updateTimerUI(durationSec, durationSec);
 
-    // 【重要】バックグラウンド通知予約
+    // 通知予約
     if (LocalNotifications) {
         LocalNotifications.schedule({
             notifications: [{
@@ -204,12 +228,11 @@ function startTimer(minutes) {
                 body: state.isBreak ? "休憩終了" : `${els.taskName.textContent} 終了`,
                 id: 999,
                 schedule: { at: new Date(state.endTime) },
-                sound: null // デフォルト音
+                sound: null
             }]
         });
     }
 
-    // メインループ
     state.timerId = setInterval(() => {
         const remainingMs = state.endTime - Date.now();
         const remainingSec = Math.ceil(remainingMs / 1000);
@@ -219,28 +242,32 @@ function startTimer(minutes) {
         } else {
             updateTimerUI(remainingSec, durationSec);
         }
-    }, 200); // UI更新頻度
+    }, 200);
 }
 
 function stopTimerLogic() {
     if (state.timerId) clearInterval(state.timerId);
     if (state.warnId) clearInterval(state.warnId);
     if (LocalNotifications) LocalNotifications.cancel({ notifications: [{id: 999}] });
+    
     state.isRunning = false;
+    // ★タイマー停止時は無音再生も止める
+    keepAliveAudio.pause();
+    keepAliveAudio.currentTime = 0;
 }
 
 function updateTimerUI(currentSec, totalSec) {
+    // 負の値にならないように
+    currentSec = Math.max(0, currentSec);
     const m = Math.floor(currentSec / 60);
     const s = currentSec % 60;
     els.timerDisplay.textContent = `${m}:${s.toString().padStart(2, '0')}`;
     
-    // プログレスリング更新
     const offset = els.circumference - (currentSec / totalSec) * els.circumference;
     els.progressRing.style.strokeDashoffset = offset;
 }
 
-function updateDisplay(idx, duration) {
-    // タスク名などのテキスト更新
+function updateDisplay(idx) {
     if (state.isBreak) {
         els.taskName.textContent = "休憩中 (リラックス...)";
         els.progressRing.classList.replace('text-blue-500', 'text-green-500');
@@ -264,6 +291,9 @@ function finishTaskTimer() {
     updateTimerUI(0, 1);
     els.retryBtn.classList.remove('hidden');
     els.statusMsg.textContent = "アクション待ち...";
+    
+    // ★終了後も警告ループのために再生再開（OSにアクティブと思わせる）
+    keepAliveAudio.play().catch(e=>{});
 
     const msg = state.isBreak ? 
         "休憩終了です。画面を見て、次のタスクへ進んでください。" : 
@@ -271,10 +301,10 @@ function finishTaskTimer() {
     
     speak(msg);
 
-    // 没頭防止アラート (バックグラウンドでも動くようForegroundService頼みだが、JS側でもループ維持)
     state.warnId = setInterval(() => {
         if (state.warnCount >= appConfig.warnLoopLimit) {
             clearInterval(state.warnId);
+            keepAliveAudio.pause(); // 完全終了
             return;
         }
         state.warnCount++;
@@ -284,23 +314,18 @@ function finishTaskTimer() {
             "時間管理モードです。切り替えをお願いします。"
         ];
         speak(phrases[state.warnCount % phrases.length]);
-    }, 15000);
+    }, 300000);
 }
 
 // ==========================================
 // 5. アクションハンドラ
 // ==========================================
 function setupEventListeners() {
-    // 設定画面の開閉
     els.menuBtn.addEventListener('click', openSettings);
     els.saveSettingsBtn.addEventListener('click', saveToStorage);
-    els.closeSettingsBtnArea.addEventListener('click', () => {
-        // 保存せず閉じる場合は設定をリセットすべきだが今回は簡易的に閉じる
-        closeSettings();
-    });
+    els.closeSettingsBtnArea.addEventListener('click', closeSettings);
     els.settingsOverlay.addEventListener('click', closeSettings);
 
-    // メイン操作
     els.nextBtn.addEventListener('click', () => {
         if (state.currentIndex === -1) {
             speak("ルーティンを開始します。");
@@ -321,7 +346,7 @@ function setupEventListeners() {
     });
 
     els.retryBtn.addEventListener('click', () => {
-        stopTimerLogic(); // 警告ループ停止
+        stopTimerLogic();
         speak("3分延長します。無理せず進めましょう。");
         startTimer(3);
     });
@@ -348,7 +373,6 @@ function setupEventListeners() {
 function openSettings() {
     renderTaskList();
     els.settingsOverlay.classList.remove('hidden');
-    // 少し待ってからopacity変更でアニメーション
     requestAnimationFrame(() => {
         els.settingsOverlay.classList.remove('opacity-0');
         els.settingsScreen.classList.remove('translate-y-full');
@@ -367,9 +391,6 @@ function handleNext() {
     stopTimerLogic();
     if (state.isBreak) {
         state.isBreak = false;
-        // 休憩後は現在のタスクを再開ではなく「次のタスク」か「休憩していたタスク」かの仕様によるが
-        // ここでは「休憩していたタスク」に戻る挙動（または休憩が挟まる設計）
-        // 指示書の挙動: 休憩->次のタスクへ進むとあるため次へ
         if (state.currentIndex < currentTasks.length) {
              startTask(state.currentIndex);
         } else {
@@ -403,6 +424,12 @@ function endAllTasks() {
 // 6. リスト描画 (SortableJS修正版)
 // ==========================================
 function renderTaskList() {
+    // ★重要: 既存のSortableインスタンスがあれば破棄する
+    if (sortableInstance) {
+        sortableInstance.destroy();
+        sortableInstance = null;
+    }
+
     els.taskList.innerHTML = '';
     currentTasks.forEach((task, index) => {
         const li = document.createElement('li');
@@ -425,11 +452,9 @@ function renderTaskList() {
             </div>
         `;
         
-        // イベントバブリング防止とデータバインディング
         const nameInput = li.querySelector('input[type="text"]');
         const durInput = li.querySelector('input[type="number"]');
         
-        // 【重要】SortableJSと干渉しないように、入力時のイベント伝播を制御
         nameInput.addEventListener('mousedown', e => e.stopPropagation());
         nameInput.addEventListener('touchstart', e => e.stopPropagation());
         nameInput.addEventListener('input', e => currentTasks[index].name = e.target.value);
@@ -448,10 +473,10 @@ function renderTaskList() {
         els.taskList.appendChild(li);
     });
 
-    // SortableJS設定 (スマホ最適化)
-    new Sortable(els.taskList, {
-        handle: '.drag-handle',   // ハンドル部分のみでドラッグ可能にする
-        delay: 100,               // 誤タップ防止
+    // ★重要: Sortableを再生成し、変数を保存する
+    sortableInstance = new Sortable(els.taskList, {
+        handle: '.drag-handle',
+        delay: 100,
         delayOnTouchOnly: true,
         animation: 150,
         ghostClass: 'sortable-ghost',
