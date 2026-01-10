@@ -8,55 +8,35 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 1. リポジトリのチェックアウト
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # 2. Node.jsのセットアップ
-      # 注意: cache: 'npm' を削除しています（package-lock.jsonがないエラーを回避するため）
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 18
       
-      # 3. 依存関係のインストール
       - name: Install dependencies
         run: |
-          npm install --legacy-peer-deps
-          npm install -D typescript --legacy-peer-deps
+          npm install
+          npm install -D typescript
 
-      # 4. Java環境のセットアップ (Androidビルドに必要)
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
-      # 5. Capacitor初期化とAndroidフォルダの生成
-      # ここで 'npx cap add android' を行うことで、gradlewなどのビルドツールが自動生成されます
-      # すでにフォルダがあってもエラーにならないよう '|| true' を付けています
-      - name: Setup Capacitor Android
+      - name: Setup Capacitor
         run: |
           npx cap add android || true
           npx cap sync android
 
-      # 6. AndroidManifest.xml の修正 (TTS権限とバックグラウンド動作)
-      - name: Inject Permissions to Manifest
+      # ==========================================
+      # カスタムJava: WakeLock付きのForegroundService
+      # ==========================================
+      - name: Create Native Service
         run: |
-          # Android 11+対応: TTSサービスへのアクセス権限を宣言 (<application>タグの直前に挿入)
-          sed -i '/<application/i <queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>' android/app/src/main/AndroidManifest.xml
+          mkdir -p android/app/src/main/java/com/routinetimer/app
           
-          # フォアグラウンドサービスの登録 (<application>終了タグの直前に挿入)
-          sed -i '/<\/application>/i <service android:name=".ForegroundService" android:exported="false" />' android/app/src/main/AndroidManifest.xml
-          
-          # 権限の追加 (<manifest>終了タグの直前に挿入)
-          sed -i '/<\/manifest>/i <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
-
- 
-      # 7. カスタムJavaファイルの作成 (ForegroundServiceなど)
-      # シェルスクリプトでファイルの中身を書き込みます
-      - name: Create ForegroundService.java
-        run: |
+          # ForegroundService.java (WakeLock追加版)
           cat << EOF > android/app/src/main/java/com/routinetimer/app/ForegroundService.java
           package com.routinetimer.app;
           import android.app.Notification;
@@ -65,21 +45,40 @@ jobs:
           import android.app.Service;
           import android.content.Intent;
           import android.os.IBinder;
+          import android.os.PowerManager; // 追加
+          
           public class ForegroundService extends Service {
+              private PowerManager.WakeLock wakeLock;
+              
               @Override
               public void onCreate() {
                   super.onCreate();
                   createNotificationChannel();
+                  
+                  // WakeLockの取得 (CPUを止めない)
+                  PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
+                  wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RoutineTimer::WakeLock");
+                  wakeLock.acquire();
+                  
                   Notification notification = new Notification.Builder(this, "TIMER_CHANNEL")
                           .setContentTitle("ルーティンタイマー")
-                          .setContentText("動作中")
+                          .setContentText("バックグラウンドで実行中")
                           .setSmallIcon(android.R.drawable.ic_dialog_info)
                           .build();
                   startForeground(1, notification);
               }
+              
+              @Override
+              public void onDestroy() {
+                  if (wakeLock != null && wakeLock.isHeld()) {
+                      wakeLock.release();
+                  }
+                  super.onDestroy();
+              }
+              
               private void createNotificationChannel() {
                   if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                      NotificationChannel channel = new NotificationChannel("TIMER_CHANNEL", "Timer", NotificationManager.IMPORTANCE_LOW);
+                      NotificationChannel channel = new NotificationChannel("TIMER_CHANNEL", "Timer Service", NotificationManager.IMPORTANCE_LOW);
                       getSystemService(NotificationManager.class).createNotificationChannel(channel);
                   }
               }
@@ -88,9 +87,7 @@ jobs:
           }
           EOF
 
-      # 8. MainActivtyの修正 (サービス起動処理の追加)
-      - name: Update MainActivity.java
-        run: |
+          # MainActivity.java
           cat << EOF > android/app/src/main/java/com/routinetimer/app/MainActivity.java
           package com.routinetimer.app;
           import android.content.Intent;
@@ -105,8 +102,14 @@ jobs:
           }
           EOF
 
-      # 9. APKのビルド
-      # gradlew に実行権限 (+x) を付与してから実行します
+      - name: Inject Permissions
+        run: |
+          # TTS権限、WakeLock権限、サービス権限を追加
+          sed -i '/<application/i <queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>' android/app/src/main/AndroidManifest.xml
+          sed -i '/<\/manifest>/i <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />' android/app/src/main/AndroidManifest.xml
+          sed -i '/<\/manifest>/i <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml
+          sed -i '/<\/application>/i <service android:name=".ForegroundService" android:exported="false" />' android/app/src/main/AndroidManifest.xml
+
       - name: Build APK
         working-directory: android
         run: |
@@ -114,9 +117,7 @@ jobs:
           ./gradlew clean
           ./gradlew assembleDebug
 
-      # 10. 生成物のアップロード
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: routine-timer-debug.apk
+          name: routine-timer-native.apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
