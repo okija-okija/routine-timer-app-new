@@ -22,7 +22,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17' # Java 17が無難です（21だとCapacitorバージョンによっては警告が出るため）
+          java-version: '21' # Java 17が無難です（21だとCapacitorバージョンによっては警告が出るため）
 
       - name: Setup Capacitor
         run: |
