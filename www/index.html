@@ -2,100 +2,160 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <base href="./" />
-    
     <title>Routine Timer</title>
-    
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
-    
     <style>
-        .drag-handle { cursor: grab; touch-action: none; }
-        body { user-select: none; font-family: 'Helvetica Neue', Arial, sans-serif; }
-        .active-task { background-color: #e0f2fe; border-left: 5px solid #0ea5e9; }
+        /* ネイティブアプリらしい操作感のための設定 */
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            overscroll-behavior-y: none;
+        }
+        /* スムーズなアニメーション */
+        .transition-all { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 300ms; }
         
-        /* 万が一読み込みに失敗したときのための最低限のスタイル */
-        #error-log { display: none; color: red; background: white; padding: 20px; z-index: 9999; position: fixed; top: 0; left: 0; width: 100%; height: 100%; overflow: scroll; }
+        /* 円形プログレスバー用 */
+        .progress-ring__circle {
+            transition: stroke-dashoffset 0.35s;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+        }
+        
+        /* ドラッグ操作 */
+        .sortable-ghost { opacity: 0.4; background: #f3f4f6; }
+        .drag-handle { touch-action: none; cursor: grab; }
+        
+        /* 入力フォームのスタイル調整 */
+        input:focus { outline: none; border-color: #3b82f6; }
+        
+        /* iOSのセーフエリア対応 */
+        .safe-pb { padding-bottom: env(safe-area-inset-bottom); }
     </style>
 </head>
-<body class="h-screen flex flex-col items-center justify-center p-4 bg-gray-100">
+<body class="bg-gray-50 h-screen w-screen overflow-hidden flex flex-col text-gray-800">
 
-    <div id="error-log"></div>
-
-    <div class="w-full max-w-md bg-white rounded-3xl shadow-xl overflow-hidden h-[850px] flex flex-col relative border border-gray-300">
-        <header class="bg-gray-50 p-4 border-b flex justify-between items-center h-16 shrink-0 z-10">
-            <h1 class="text-xl font-bold text-gray-700">ルーティンタイマー</h1>
-            <button id="menuBtn" class="text-gray-600 p-2 rounded-full hover:bg-gray-200">
-                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+    <main class="flex-1 flex flex-col relative z-0">
+        <header class="px-6 pt-12 pb-4 flex justify-between items-center bg-white shadow-sm z-10">
+            <h1 class="text-xl font-bold tracking-tight text-gray-900">Routine Timer</h1>
+            <button id="menuBtn" class="p-2 rounded-full hover:bg-gray-100 active:scale-95 transition-transform text-gray-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
             </button>
         </header>
 
-        <div id="mainScreen" class="flex-1 flex flex-col items-center justify-between p-6 overflow-y-auto">
-            <div class="text-center mt-2 w-full">
-                <p class="text-gray-400 text-sm mb-1">CURRENT TASK</p>
-                <h2 id="currentTaskName" class="text-3xl font-bold text-gray-800 break-words leading-tight min-h-[4rem] flex items-center justify-center">準備中...</h2>
+        <div class="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
+            <div class="text-center w-full px-4">
+                <div class="text-xs font-semibold text-gray-400 tracking-wider mb-2">CURRENT TASK</div>
+                <h2 id="currentTaskName" class="text-3xl font-bold text-gray-800 leading-tight min-h-[4rem] flex items-center justify-center break-words">
+                    準備完了
+                </h2>
             </div>
 
-            <div class="relative w-64 h-64 flex items-center justify-center bg-gray-50 rounded-full border-4 border-blue-400 shadow-inner my-4">
-                <span id="timerDisplay" class="text-6xl font-mono font-bold text-gray-700 tracking-wider">00:00</span>
-            </div>
-
-            <div id="statusMessage" class="text-red-500 font-bold h-6 text-center text-sm"></div>
-
-            <div class="w-full space-y-3 mb-2">
-                <button id="nextBtn" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 rounded-xl shadow-lg transform transition active:scale-95 text-xl">スタート</button>
-                <div class="flex space-x-3">
-                    <button id="breakBtn" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-xl shadow-md active:scale-95">5分休憩</button>
-                    <button id="retryBtn" class="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 rounded-xl shadow-md active:scale-95 hidden">延長 (+3分)</button>
+            <div class="relative w-72 h-72 flex items-center justify-center">
+                <svg class="w-full h-full transform" viewBox="0 0 120 120">
+                    <circle class="text-gray-200" stroke-width="6" stroke="currentColor" fill="transparent" r="54" cx="60" cy="60" />
+                    <circle id="progressRing" class="progress-ring__circle text-blue-500" stroke-width="6" stroke-linecap="round" stroke="currentColor" fill="transparent" r="54" cx="60" cy="60" style="stroke-dasharray: 339.292; stroke-dashoffset: 0;" />
+                </svg>
+                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                    <span id="timerDisplay" class="text-6xl font-mono font-bold text-gray-700 tracking-tighter">00:00</span>
+                    <div id="statusMessage" class="text-orange-500 font-bold text-sm h-5 mt-2"></div>
                 </div>
-                <button id="stopBtn" class="w-full text-gray-400 hover:text-gray-600 font-bold py-2 text-sm mt-2">中断する</button>
+            </div>
+
+            <div class="w-full max-w-sm space-y-4">
+                <button id="nextBtn" class="w-full bg-blue-600 active:bg-blue-700 text-white font-bold py-5 rounded-2xl shadow-lg shadow-blue-200 transform transition active:scale-[0.98] text-xl flex items-center justify-center">
+                    <span>スタート</span>
+                </button>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <button id="breakBtn" class="bg-white border-2 border-gray-100 active:bg-gray-50 text-gray-700 font-bold py-4 rounded-xl shadow-sm active:scale-[0.98]">
+                        ☕ 休憩 (5分)
+                    </button>
+                    <button id="retryBtn" class="bg-yellow-50 active:bg-yellow-100 text-yellow-700 border-2 border-yellow-100 font-bold py-4 rounded-xl shadow-sm active:scale-[0.98] hidden">
+                        延長 (+3分)
+                    </button>
+                    <button id="stopBtn" class="bg-white border-2 border-gray-100 text-red-500 font-bold py-4 rounded-xl shadow-sm active:scale-[0.98]">
+                        ■ 中断
+                    </button>
+                </div>
             </div>
         </div>
+    </main>
 
-        <div id="settingsScreen" class="absolute inset-0 bg-white z-20 transform translate-x-full transition-transform duration-300 flex flex-col">
-            <header class="bg-blue-50 p-4 border-b flex justify-between items-center">
-                <h2 class="text-lg font-bold text-gray-700">設定 / タスク編集</h2>
-                <button id="closeSettingsBtn" class="text-blue-600 font-bold px-3 py-1 border border-blue-600 rounded hover:bg-blue-100">閉じる</button>
-            </header>
-            <div class="flex-1 overflow-y-auto p-4 pb-20">
-                <div class="mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
-                    <h3 class="font-bold text-gray-700 mb-3">🔊 音声設定</h3>
-                    <div class="mb-3">
-                        <label class="block text-xs text-gray-500 mb-1">読み上げ速度</label>
-                        <div class="flex items-center">
-                            <span class="text-xs mr-2">遅</span>
-                            <input type="range" id="voiceRateInput" min="0.5" max="2.0" step="0.1" class="flex-1 h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer">
-                            <span class="text-xs ml-2">速</span>
+    <div id="settingsOverlay" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 hidden opacity-0 transition-opacity duration-300"></div>
+    <div id="settingsScreen" class="fixed inset-x-0 bottom-0 bg-white rounded-t-3xl z-50 transform translate-y-full transition-transform duration-300 h-[90vh] flex flex-col shadow-2xl">
+        
+        <div class="w-full flex justify-center pt-3 pb-1" id="closeSettingsBtnArea">
+            <div class="w-12 h-1.5 bg-gray-300 rounded-full"></div>
+        </div>
+
+        <header class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+            <h2 class="text-xl font-bold text-gray-800">設定・編集</h2>
+            <button id="saveSettingsBtn" class="text-sm font-bold bg-gray-900 text-white px-4 py-2 rounded-lg shadow-md active:bg-gray-700">保存して閉じる</button>
+        </header>
+
+        <div class="flex-1 overflow-y-auto px-6 py-4 pb-24 space-y-8">
+            <section>
+                <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">音声ガイド</h3>
+                <div class="bg-gray-50 rounded-2xl p-5 space-y-4">
+                    <div>
+                        <div class="flex justify-between mb-2">
+                            <label class="text-sm font-bold text-gray-700">読み上げ速度</label>
+                            <span id="voiceRateValue" class="text-sm font-bold text-blue-600">1.2x</span>
                         </div>
-                        <div class="text-center text-xs text-blue-500 mt-1 font-bold" id="voiceRateValue">1.2x</div>
+                        <input type="range" id="voiceRateInput" min="0.5" max="2.0" step="0.1" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">音声の種類</label>
-                        <select id="voiceSelect" class="w-full border rounded p-2 text-sm bg-white"><option value="">デフォルト</option></select>
+                        <label class="block text-sm font-bold text-gray-700 mb-2">声の種類</label>
+                        <div class="relative">
+                            <select id="voiceSelect" class="w-full bg-white border border-gray-200 text-gray-700 text-sm rounded-xl p-3 appearance-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                <option value="">デフォルト</option>
+                            </select>
+                            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                                <svg class="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                            </div>
+                        </div>
                     </div>
-                    <button id="testVoiceBtn" class="mt-3 w-full bg-white border border-gray-300 text-gray-600 text-xs py-2 rounded hover:bg-gray-100">音声テスト</button>
+                    <button id="testVoiceBtn" class="w-full bg-white border border-gray-200 text-gray-600 font-bold py-2.5 rounded-xl text-sm active:bg-gray-100">
+                        🔊 テスト再生
+                    </button>
                 </div>
-                <div class="mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
-                    <h3 class="font-bold text-gray-700 mb-3">⚙️ 動作設定</h3>
-                    <div class="flex items-center justify-between mb-2">
-                        <label class="text-sm text-gray-600">アラート回数</label>
-                        <input type="number" id="loopLimitInput" class="w-16 border rounded p-1 text-center" min="1" max="10">
+            </section>
+
+            <section>
+                <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4">タイマー設定</h3>
+                <div class="bg-gray-50 rounded-2xl p-5 space-y-4">
+                    <div class="flex items-center justify-between">
+                        <label class="text-sm font-bold text-gray-700">没頭防止アラート</label>
+                        <div class="flex items-center bg-white rounded-lg border border-gray-200 px-3 py-1">
+                            <input type="number" id="loopLimitInput" class="w-12 text-center text-lg font-bold text-gray-800 bg-transparent" min="1" max="10">
+                            <span class="text-xs text-gray-400 ml-1">回</span>
+                        </div>
                     </div>
                     <div class="flex items-center justify-between">
-                        <label class="text-sm text-gray-600">休憩時間 (分)</label>
-                        <input type="number" id="breakTimeInput" class="w-16 border rounded p-1 text-center">
+                        <label class="text-sm font-bold text-gray-700">休憩時間</label>
+                        <div class="flex items-center bg-white rounded-lg border border-gray-200 px-3 py-1">
+                            <input type="number" id="breakTimeInput" class="w-12 text-center text-lg font-bold text-gray-800 bg-transparent">
+                            <span class="text-xs text-gray-400 ml-1">分</span>
+                        </div>
                     </div>
                 </div>
-                <div class="mb-2">
-                    <h3 class="font-bold text-gray-700 mb-2">📝 タスクリスト</h3>
-                    <ul id="taskListContainer" class="space-y-2 pb-4"></ul>
-                    <button id="addTaskBtn" class="w-full border-2 border-dashed border-gray-300 text-gray-500 py-3 rounded-lg font-bold hover:bg-gray-50 hover:text-blue-500 hover:border-blue-300 transition">+ 新しいタスクを追加</button>
+            </section>
+
+            <section>
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">タスクリスト</h3>
+                    <button id="addTaskBtn" class="text-blue-600 text-sm font-bold px-3 py-1 bg-blue-50 rounded-lg active:bg-blue-100">
+                        + 追加
+                    </button>
                 </div>
-            </div>
-            <div class="p-4 bg-white border-t z-10 shadow-lg">
-                <button id="saveSettingsBtn" class="w-full bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 rounded-lg shadow-lg">現在の設定を保存</button>
-            </div>
+                
+                <ul id="taskListContainer" class="space-y-3">
+                    </ul>
+            </section>
         </div>
     </div>
 
